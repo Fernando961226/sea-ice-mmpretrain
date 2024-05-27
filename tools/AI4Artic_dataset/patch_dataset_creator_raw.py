@@ -1,6 +1,5 @@
-
 """
-File use to create the patches for the ready2train version from AI4Artic dataset
+File use to create the patches for the raw data from AI4Artic
 """
 
 
@@ -20,8 +19,9 @@ import matplotlib.pyplot as plt
 import re
 import datetime
 from dateutil import relativedelta
-
+from convert_raw_icechart import convert_polygon_icechart
 from parallel_stuff import Parallel
+from scipy.interpolate import RegularGridInterpolator
 
 
 def Arguments():
@@ -33,7 +33,7 @@ def Arguments():
     """
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', default='/media/fernando/Databases/ai4arcticready2train_v2', type=str, help='')
+    parser.add_argument('--root', default='/home/fernando/scratch/ai4arctic_raw_train_v3', type=str, help='')
     parser.add_argument('--downsampling', default=1, type=int, help='Downsampling of the scene')
     parser.add_argument('--patch_size', default=224, type=int, help='size of patch')
     parser.add_argument('--overlap', default=0.0, type=float, help='Amount of overlap. Max 1, Min 0')
@@ -57,17 +57,17 @@ class Slide_patches_index(data.Dataset):
         w_grids (int): Number of horizontal grids (patch positions).
         patches_list (list): List of valid patches defined by their coordinates.
     '''
-    def __init__(self, h_img, w_img, patch_size, downscaling, overlap_percent, landmask):
+    def __init__(self, h_img, w_img, patch_size, downscaling, overlap_percent, nan_mask):
         '''
         Initializes the Slide_patches_index with the given image dimensions, patch size, 
-        overlap percentage, and landmask.
+        overlap percentage.
         
         Args:
             h_img (int): Height of the input image.
             w_img (int): Width of the input image.
             patch_size (int): Size of each patch (square patch).
             overlap_percent (float): Percentage of overlap between patches.
-            landmask (numpy array): Boolean array indicating valid areas (land) in the image.
+            nan_mask (boolean array): If true then that area is NaN.
         '''
         super(Slide_patches_index, self).__init__()
 
@@ -103,28 +103,29 @@ class Slide_patches_index(data.Dataset):
                 x1 = max(x2 - self.w_crop, 0)
 
                 # indexes for land since it is not down_scale
-                y1_land = int(np.round(y1 * d_h_img))
-                x1_land = int(np.round(x1 * d_w_img))
+                y1_nan = int(np.round(y1 * d_h_img))
+                x1_nan = int(np.round(x1 * d_w_img))
 
-                y2_land = int(np.round(y2 * d_h_img))
-                x2_land = int(np.round(x2 * d_w_img))
+                y2_nan = int(np.round(y2 * d_h_img))
+                x2_nan = int(np.round(x2 * d_w_img))
 
                 # Removes the patches that are in land
-                if not landmask[y1_land:y2_land, x1_land:x2_land].any():
+                if not nan_mask[y1_nan:y2_nan, x1_nan:x2_nan].all():
                     self.patches_list.append((y1, y2, x1, x2))
                 
                 # program to verify the patches are working
-                # print(f'Land mask:({x1_land},{y1_land}), ({y2_land},{x2_land})')
-                # plt.imshow(landmask[y1_land:y2_land, x1_land:x2_land])
+                # print(f'Nan mask:({x1_nan},{y1_nan}), ({y2_nan},{x2_nan})')
+                # plt.imshow(landmask[y1_nan:y2_nan, x1_nan:x2_nan])
                 # plt.title('landmask')
                 # plt.show()
                 
 
-                # landmask_small = torch.nn.functional.interpolate(input=torch.from_numpy(np.float32(landmask)).view((1, 1, h_img, w_img)), size=(h_img_d, w_img_d), mode='bilinear').numpy().squeeze()
-                # print(f'Small Land mask:({x1},{y1}), ({y2},{x2})')
-                # plt.imshow(landmask_small[y1:y2, x1:x2])
-                # plt.title('small landmask')
+                # nan_mask_small = torch.nn.functional.interpolate(input=torch.from_numpy(np.float32(nan_mask)).view((1, 1, h_img, w_img)), size=(h_img_d, w_img_d), mode='bilinear').numpy().squeeze()
+                # print(f'Small nan mask:({x1},{y1}), ({y2},{x2})')
+                # plt.imshow(nan_mask_small[y1:y2, x1:x2])
+                # plt.title('Small Nan Mask')
                 # plt.show()
+
 
     def __getitem__(self, index):
 
@@ -191,6 +192,20 @@ def Extract_patches(args, item):
     ic(output_folder)
     data = {}
 
+    #  ---------------- Get the SIC, SOD, FLOE Charts ------------------------- #
+    scene = convert_polygon_icechart(scene)
+
+    # ----------------- Remove Nan's from SAR and Create Nan Mask -------------------------------- #
+
+    data['nersc_sar_primary'] = scene['nersc_sar_primary'].values
+    data['nersc_sar_secondary'] = scene['nersc_sar_secondary'].values
+
+    data['sar_nan_mask'] = np.isnan(data['nersc_sar_primary'])
+
+    data['nersc_sar_primary'][data['sar_nan_mask']] = 0
+    data['nersc_sar_secondary'][data['sar_nan_mask']] = 0
+
+
     # ----------- DOWNN SCALE SAR ------------- #
 
     rows, cols = scene['nersc_sar_primary'].shape
@@ -199,18 +214,48 @@ def Extract_patches(args, item):
 
     down_rows, down_cols = rows/rows_down, cols/cols_down
 
-
     if down_scale != 1:
-
         data['nersc_sar_primary'] = torch.nn.functional.interpolate(input=torch.from_numpy(scene['nersc_sar_primary'].values).view((1, 1, rows, cols)), 
-                                                            size=(rows_down, cols_down), mode='bilinear').numpy().squeeze()
+                                                                    size=(rows_down, cols_down), mode='bilinear').numpy().squeeze()
     else:
         data['nersc_sar_primary'] = scene['nersc_sar_primary'].values
 
+    # ----------- DOWN SCALE SAR NAN Mask ------------- #
+
+    data['sar_nan_mask'] = torch.nn.functional.interpolate(input=torch.from_numpy(np.float32(data['sar_nan_mask'])).view((1, 1, rows, cols)), 
+                                                           size=(rows_down, cols_down), mode='nearest').numpy().squeeze()
+    
+    data['sar_nan_mask'] = np.array(data['sar_nan_mask'], dtype=bool)
+
+    # ---------------------- Interpolate Grid variables to match SAR ---------------------- #
+    grid_variables = ['sar_grid_latitude', 'sar_grid_longitude', 'sar_grid_incidenceangle']
+
+    # Extract and reshape the initial x and y coordinates
+    x = scene['sar_grid_sample'].values
+    x_l = np.unique(x)
+
+    y = scene['sar_grid_line'].values
+    y_l = np.unique(y)
+
+    # Define the finer grid for interpolation
+    x_fine = np.linspace(0, cols - 1, cols_down)
+    y_fine = np.linspace(0, rows - 1, rows_down)
+    X, Y = np.meshgrid(x_fine, y_fine, indexing='xy')
+    points = np.array([Y.flatten(), X.flatten()]).T
+
+    # Loop through each variable to reshape, create interpolator, interpolate, and store results
+    for var in grid_variables:
+        values = scene[var].values
+        reshaped_values = np.reshape(values, (len(y_l), len(x_l)))
+        interpolator = RegularGridInterpolator((y_l, x_l), reshaped_values, method='cubic')
+        interpolated_values = interpolator(points)
+        data[var] = interpolated_values.reshape(X.shape)
 
     # ----------- INTERPOLATE VARIABLES TO MATCH SAR SCALE ------------ #
 
-    exclude_variables = ['nersc_sar_primary', 'SIC', 'FLOE', 'SOD']
+    exclude_variables = ['nersc_sar_primary', 'polygon_icechart', 'sar_grid_line', 'sar_grid_sample', 
+                         'sar_grid_latitude', 'sar_grid_longitude', 'sar_grid_incidenceangle', 'sar_grid_height', 
+                         'amsr2_swath_map', 'swath_segmentation', 'SIC', 'FLOE', 'SOD']
 
     vars = list(scene.keys())
     filtered_vars = [var for var in vars if var not in exclude_variables]
@@ -224,8 +269,11 @@ def Extract_patches(args, item):
     for var in sea_ice_maps:
         r, c = scene[var].shape
         data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(scene[var].values).view((1, 1, r, c)), 
-                                            
+                                                    size=(rows_down, cols_down), mode='nearest').numpy().squeeze()
+
+    # joblib.dump(data, 'out.pkl')
     # -----------  PATCH EXTRACTION -------------- #
+
     data_patch = {}
     for i in range(len(patch_idx)):
         
@@ -240,11 +288,12 @@ def Extract_patches(args, item):
             if args.patch_size > np.abs(x1-x2):
                 data_patch[var] = np.pad(data_patch[var], (0, 0, 0, args.patch_size - np.abs(x1-x2)), 'symmetric')
 
-        data_patch['scene_id'] = scene.attrs['scene_id']
+        data_patch['file_name'] = os.path.split(scene_file)[1]
+        data_patch['scene_id'] = data_patch['file_name'][17:32] + '_' + data_patch['file_name'][77:80]
         data_patch['indexes'] = [(x1*down_cols, y1*down_cols), (x2*down_cols, y2*down_rows)]
-        data_patch['pixel_spacing'] = scene.attrs['pixel_spacing'] * down_scale
-        data_patch['ice_service'] = scene.attrs['ice_service']
-        months, days = get_time_of_year(scene.attrs['scene_id'])
+        data_patch['pixel_spacing'] = 40 * down_scale
+        data_patch['ice_service'] = data_patch['file_name'][77:80]
+        months, days = get_time_of_year(data_patch['scene_id'])
         data_patch['month'] = months
         data_patch['day'] = days
         joblib.dump(data_patch, output_folder + "/{:05d}.pkl".format(i))
@@ -254,14 +303,14 @@ if __name__ == '__main__':
     args = Arguments()
 
     # Grab all .nc files from root as a string list
-    scene_files = glob.glob(args.root + '/*.nc')[0:1]
+    scene_files = glob.glob(args.root + '/*.nc')[0:3]
 
     patches_idx = []
     for f in tqdm(scene_files, ncols=50):
         scene = xr.open_dataset(f, engine='h5netcdf')
         row, col = scene['nersc_sar_primary'].shape
-        landmask = scene['nersc_sar_primary'] == 0
-        patches_idx.append(Slide_patches_index(row, col, args.patch_size, args.downsampling, args.overlap, landmask))
+        nan_mask = np.isnan(scene['nersc_sar_primary'])
+        patches_idx.append(Slide_patches_index(row, col, args.patch_size, args.downsampling, args.overlap, nan_mask))
     
     iterable = zip(scene_files, patches_idx)
     
