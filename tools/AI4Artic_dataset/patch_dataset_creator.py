@@ -224,6 +224,7 @@ def Extract_patches(args, item):
     for var in sea_ice_maps:
         r, c = scene[var].shape
         data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(scene[var].values).view((1, 1, r, c)), 
+                                                    size=(rows_down, cols_down), mode='nearest').numpy().squeeze()
                                             
     # -----------  PATCH EXTRACTION -------------- #
     data_patch = {}

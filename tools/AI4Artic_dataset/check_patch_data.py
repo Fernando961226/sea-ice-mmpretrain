@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 
 # Specify the path to the saved .pkl file
-file_path = '/home/fernando/scratch/train/S1A_EW_GRDM_1SDH_20210714T114034_20210714T114134_038773_049342_A7E5_icechart_cis_SGRDIFOXE_20210714T1141Z_pl_a_down_scale_2X/00000.pkl'
+file_path = '/home/fernando/scratch/train/S1A_EW_GRDM_1SDH_20190210T120052_20190210T120156_025867_02E111_12DF_icechart_dmi_201902101200_Qaanaaq_RIC_down_scale_4X/00000.pkl'
 
 # Load the dictionary from the .pkl file
 data_patch = joblib.load(file_path)
