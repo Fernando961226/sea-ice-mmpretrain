@@ -22,7 +22,7 @@ from dateutil import relativedelta
 from convert_raw_icechart import convert_polygon_icechart
 from parallel_stuff import Parallel
 from scipy.interpolate import RegularGridInterpolator
-
+import gc
 
 def Arguments():
     """
@@ -37,6 +37,7 @@ def Arguments():
     parser.add_argument('--downsampling', default=1, type=int, help='Downsampling of the scene')
     parser.add_argument('--patch_size', default=224, type=int, help='size of patch')
     parser.add_argument('--overlap', default=0.0, type=float, help='Amount of overlap. Max 1, Min 0')
+    parser.add_argument('--max_processes', default=2, type=int, help='Amount of overlap. Max 1, Min 0')
     parser.add_argument('--output', default='/home/fernando/scratch/train', type=str, help='')
     args = parser.parse_args()
     return args
@@ -185,12 +186,14 @@ def Extract_patches(args, item):
     
     scene_file, patch_idx = item
     down_scale = args.downsampling
-    scene = xr.open_dataset(f, engine='h5netcdf')
+    scene = xr.open_dataset(scene_file, engine='h5netcdf')
     output_folder = os.path.join(args.output, os.path.split(scene_file)[1][:-3]+'_down_scale_'+str(down_scale)+'X')
     if os.path.exists(output_folder): shutil.rmtree(output_folder)
     os.makedirs(output_folder, exist_ok=True)
     ic(output_folder)
     data = {}
+    del item
+    gc.collect()
 
     #  ---------------- Get the SIC, SOD, FLOE Charts ------------------------- #
     scene = convert_polygon_icechart(scene)
@@ -221,8 +224,8 @@ def Extract_patches(args, item):
     else:
         data['nersc_sar_primary'] = scene['nersc_sar_primary'].values
 
-        scene = scene.drop_vars('nersc_sar_primary')  
-
+    scene = scene.drop_vars('nersc_sar_primary')  
+    gc.collect()
     print('sar down scale')
 
     # ----------- DOWN SCALE SAR NAN Mask ------------- #
@@ -247,6 +250,8 @@ def Extract_patches(args, item):
 
     # Define the finer grid for interpolation
     r_f, c_f = int(np.round(rows/10)), int(np.round(cols/10))
+    ic(r_f)
+    ic(c_f)
     x_fine = np.linspace(0, cols - 1, c_f)
     y_fine = np.linspace(0, rows - 1, r_f)
 
@@ -258,12 +263,13 @@ def Extract_patches(args, item):
     for var in grid_variables:
         values = scene[var].values
         reshaped_values = np.reshape(values, (len(y_l), len(x_l)))
-        interpolator = RegularGridInterpolator((y_l, x_l), reshaped_values, method='cubic')
+        interpolator = RegularGridInterpolator((y_l, x_l), reshaped_values, method='linear')
         interpolated_values = interpolator(points)
         data[var] = interpolated_values.reshape(X.shape)
         data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(data[var]).view((1, 1, r_f, c_f)), 
                                                     size=(rows_down, cols_down), mode='bilinear').numpy().squeeze()
         del interpolator, interpolated_values
+        gc.collect()
     print('Grid interpolates')
 
     # ----------- INTERPOLATE VARIABLES TO MATCH SAR SCALE ------------ #
@@ -279,16 +285,19 @@ def Extract_patches(args, item):
         r, c = scene[var].shape
         data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(scene[var].values).view((1, 1, r, c)), 
                                                     size=(rows_down, cols_down), mode='bilinear').numpy().squeeze()
-        scene = scene.drop_vars(var)  
+        scene = scene.drop_vars(var) 
+        gc.collect() 
 
     sea_ice_maps = ['SIC', 'FLOE', 'SOD']
     for var in sea_ice_maps:
         r, c = scene[var].shape
         data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(scene[var].values).view((1, 1, r, c)), 
                                                     size=(rows_down, cols_down), mode='nearest').numpy().squeeze()
-        scene = scene.drop_vars(var)  
+        scene = scene.drop_vars(var)
+        gc.collect()
 
     del scene
+    gc.collect()
     print('Match sar')
 
     # -----------  PATCH EXTRACTION -------------- #
@@ -330,11 +339,11 @@ if __name__ == '__main__':
         row, col = scene['nersc_sar_primary'].shape
         nan_mask = np.isnan(scene['nersc_sar_primary'])
         patches_idx.append(Slide_patches_index(row, col, args.patch_size, args.downsampling, args.overlap, nan_mask))
-    
+        del scene
     iterable = zip(scene_files, patches_idx)
     
     if len(scene_files) > 1:
-        Parallel(Extract_patches, iterable, args)
+        Parallel(Extract_patches, iterable, args.max_processes, args)
     else:
         Extract_patches(args, next(iterable))    
     
