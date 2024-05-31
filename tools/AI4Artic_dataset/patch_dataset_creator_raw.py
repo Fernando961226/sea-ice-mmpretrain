@@ -33,7 +33,7 @@ def Arguments():
     """
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', default='/home/fernando/scratch/ai4arctic_raw_train_v3', type=str, help='')
+    parser.add_argument('--root', default='/media/fernando/Storage/Databases/ai4arctic_raw_train_v3', type=str, help='')
     parser.add_argument('--downsampling', default=1, type=int, help='Downsampling of the scene')
     parser.add_argument('--patch_size', default=224, type=int, help='size of patch')
     parser.add_argument('--overlap', default=0.0, type=float, help='Amount of overlap. Max 1, Min 0')
@@ -194,6 +194,7 @@ def Extract_patches(args, item):
 
     #  ---------------- Get the SIC, SOD, FLOE Charts ------------------------- #
     scene = convert_polygon_icechart(scene)
+    print('Charts')
 
     # ----------------- Remove Nan's from SAR and Create Nan Mask -------------------------------- #
 
@@ -205,7 +206,7 @@ def Extract_patches(args, item):
     data['nersc_sar_primary'][data['sar_nan_mask']] = 0
     data['nersc_sar_secondary'][data['sar_nan_mask']] = 0
 
-
+    print('nan-maks')
     # ----------- DOWNN SCALE SAR ------------- #
 
     rows, cols = scene['nersc_sar_primary'].shape
@@ -220,12 +221,18 @@ def Extract_patches(args, item):
     else:
         data['nersc_sar_primary'] = scene['nersc_sar_primary'].values
 
+        scene = scene.drop_vars('nersc_sar_primary')  
+
+    print('sar down scale')
+
     # ----------- DOWN SCALE SAR NAN Mask ------------- #
 
     data['sar_nan_mask'] = torch.nn.functional.interpolate(input=torch.from_numpy(np.float32(data['sar_nan_mask'])).view((1, 1, rows, cols)), 
                                                            size=(rows_down, cols_down), mode='nearest').numpy().squeeze()
     
     data['sar_nan_mask'] = np.array(data['sar_nan_mask'], dtype=bool)
+
+    print('Nan-mask')
 
     # ---------------------- Interpolate Grid variables to match SAR ---------------------- #
     grid_variables = ['sar_grid_latitude', 'sar_grid_longitude', 'sar_grid_incidenceangle']
@@ -237,9 +244,13 @@ def Extract_patches(args, item):
     y = scene['sar_grid_line'].values
     y_l = np.unique(y)
 
+
     # Define the finer grid for interpolation
-    x_fine = np.linspace(0, cols - 1, cols_down)
-    y_fine = np.linspace(0, rows - 1, rows_down)
+    r_f, c_f = int(np.round(rows/10)), int(np.round(cols/10))
+    x_fine = np.linspace(0, cols - 1, c_f)
+    y_fine = np.linspace(0, rows - 1, r_f)
+
+
     X, Y = np.meshgrid(x_fine, y_fine, indexing='xy')
     points = np.array([Y.flatten(), X.flatten()]).T
 
@@ -250,6 +261,10 @@ def Extract_patches(args, item):
         interpolator = RegularGridInterpolator((y_l, x_l), reshaped_values, method='cubic')
         interpolated_values = interpolator(points)
         data[var] = interpolated_values.reshape(X.shape)
+        data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(data[var]).view((1, 1, r_f, c_f)), 
+                                                    size=(rows_down, cols_down), mode='bilinear').numpy().squeeze()
+        del interpolator, interpolated_values
+    print('Grid interpolates')
 
     # ----------- INTERPOLATE VARIABLES TO MATCH SAR SCALE ------------ #
 
@@ -264,14 +279,18 @@ def Extract_patches(args, item):
         r, c = scene[var].shape
         data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(scene[var].values).view((1, 1, r, c)), 
                                                     size=(rows_down, cols_down), mode='bilinear').numpy().squeeze()
+        scene = scene.drop_vars(var)  
 
     sea_ice_maps = ['SIC', 'FLOE', 'SOD']
     for var in sea_ice_maps:
         r, c = scene[var].shape
         data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(scene[var].values).view((1, 1, r, c)), 
                                                     size=(rows_down, cols_down), mode='nearest').numpy().squeeze()
+        scene = scene.drop_vars(var)  
 
-    # joblib.dump(data, 'out.pkl')
+    del scene
+    print('Match sar')
+
     # -----------  PATCH EXTRACTION -------------- #
 
     data_patch = {}
@@ -297,13 +316,13 @@ def Extract_patches(args, item):
         data_patch['month'] = months
         data_patch['day'] = days
         joblib.dump(data_patch, output_folder + "/{:05d}.pkl".format(i))
-
+    print('finish')
 
 if __name__ == '__main__':   
     args = Arguments()
 
     # Grab all .nc files from root as a string list
-    scene_files = glob.glob(args.root + '/*.nc')[0:3]
+    scene_files = glob.glob(args.root + '/*.nc')[0:4]
 
     patches_idx = []
     for f in tqdm(scene_files, ncols=50):
