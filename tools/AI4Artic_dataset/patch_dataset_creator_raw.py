@@ -2,7 +2,7 @@
 File use to create the patches for the raw data from AI4Artic
 """
 
-
+import time
 import argparse
 import glob
 import os
@@ -23,7 +23,7 @@ from convert_raw_icechart import convert_polygon_icechart
 from parallel_stuff import Parallel
 from scipy.interpolate import RegularGridInterpolator
 import gc
-
+import wandb
 def Arguments():
     """
     Parses command-line arguments.
@@ -33,12 +33,14 @@ def Arguments():
     """
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', default='../../../ai4arctic/dataset/ai4arctic_raw_train_v3', type=str, help='')
+    parser.add_argument('--root', default='../../../../ai4arctic/dataset/ai4arctic_raw_train_v3', type=str, help='')
+    parser.add_argument('--output', default='/home/' + os.getenv('LOGNAME') + '/scratch/ai4arctic/dataset/train', type=str, help='')
+
     parser.add_argument('--downsampling', default=1, type=int, help='Downsampling of the scene')
-    parser.add_argument('--patch_size', default=224, type=int, help='size of patch')
+    parser.add_argument('--patch_size', default=256, type=int, help='size of patch')
     parser.add_argument('--overlap', default=0.0, type=float, help='Amount of overlap. Max 1, Min 0')
-    parser.add_argument('--max_processes', default=2, type=int, help='Amount of overlap. Max 1, Min 0')
-    parser.add_argument('--output', default='~/scratch/train', type=str, help='')
+
+    parser.add_argument('--n_cores', default=16, type=int, help='Number of CPU cores to use in parallel process')
     args = parser.parse_args()
     return args
 
@@ -99,7 +101,7 @@ class Slide_patches_index(data.Dataset):
                 y2 = min(y1 + self.h_crop, h_img_d)
                 x2 = min(x1 + self.w_crop, w_img_d)
 
-                # TODO: Why this lines?
+                # This line guarantees complete patches at the last row/column of the patching grid
                 y1 = max(y2 - self.h_crop, 0)
                 x1 = max(x2 - self.w_crop, 0)
 
@@ -110,7 +112,7 @@ class Slide_patches_index(data.Dataset):
                 y2_nan = int(np.round(y2 * d_h_img))
                 x2_nan = int(np.round(x2 * d_w_img))
 
-                # Removes the patches that are in land
+                # Removes the patches that are pure nan
                 if not nan_mask[y1_nan:y2_nan, x1_nan:x2_nan].all():
                     self.patches_list.append((y1, y2, x1, x2))
                 
@@ -175,6 +177,20 @@ def get_time_of_year(file_name):
     return months, days
 
 
+def get_patch_index(args, scene_file):
+    """
+    Calculates the patches indexes
+    
+    Args:
+        args (argparse.Namespace): Command-line arguments.
+        scene_file (str): String containing the scene file path.
+    """
+    
+    scene = xr.open_dataset(scene_file, engine='h5netcdf')
+    row, col = scene['nersc_sar_primary'].shape
+    nan_mask = np.isnan(scene['nersc_sar_primary'])
+    return Slide_patches_index(row, col, args.patch_size, args.downsampling, args.overlap, nan_mask)
+
 def Extract_patches(args, item):
     """
     Extracts patches from the scene file and saves them.
@@ -185,21 +201,24 @@ def Extract_patches(args, item):
     """
     
     scene_file, patch_idx = item
+    if not len(patch_idx):
+        print("Number of patches = 0 for scene %s"%(os.path.split(scene_file)[1]))
+        return
+    
     down_scale = args.downsampling
     scene = xr.open_dataset(scene_file, engine='h5netcdf')
-    output_folder = os.path.join(args.output, os.path.split(scene_file)[1][:-3]+'_down_scale_'+str(down_scale)+'X')
+    output_folder = os.path.join(args.output, 'down_scale_'+str(down_scale)+'X', os.path.split(scene_file)[1][:-3])
+    ic(output_folder)
     if os.path.exists(output_folder): shutil.rmtree(output_folder)
     os.makedirs(output_folder, exist_ok=True)
-    ic(output_folder)
     data = {}
     del item
     gc.collect()
 
     #  ---------------- Get the SIC, SOD, FLOE Charts ------------------------- #
     scene = convert_polygon_icechart(scene)
-    print('Charts')
 
-    # ----------------- Remove Nan's from SAR and Create Nan Mask -------------------------------- #
+    # ----------------- CREATE NAN MASK FROM SAR -------------------------------- #
 
     data['nersc_sar_primary'] = scene['nersc_sar_primary'].values
     data['nersc_sar_secondary'] = scene['nersc_sar_secondary'].values
@@ -209,7 +228,7 @@ def Extract_patches(args, item):
     data['nersc_sar_primary'][data['sar_nan_mask']] = 0
     data['nersc_sar_secondary'][data['sar_nan_mask']] = 0
 
-    print('nan-maks')
+
     # ----------- DOWNN SCALE SAR ------------- #
 
     rows, cols = scene['nersc_sar_primary'].shape
@@ -226,18 +245,17 @@ def Extract_patches(args, item):
 
     scene = scene.drop_vars('nersc_sar_primary')  
     gc.collect()
-    print('sar down scale')
 
-    # ----------- DOWN SCALE SAR NAN Mask ------------- #
+    # ----------- DOWN SCALE SAR NAN MASK ------------- #
 
     data['sar_nan_mask'] = torch.nn.functional.interpolate(input=torch.from_numpy(np.float32(data['sar_nan_mask'])).view((1, 1, rows, cols)), 
                                                            size=(rows_down, cols_down), mode='nearest').numpy().squeeze()
     
     data['sar_nan_mask'] = np.array(data['sar_nan_mask'], dtype=bool)
 
-    print('Nan-mask')
 
-    # ---------------------- Interpolate Grid variables to match SAR ---------------------- #
+     # ----------- INTERPOLATE GRID VARIABLES TO MATCH SAR ------------ #
+
     grid_variables = ['sar_grid_latitude', 'sar_grid_longitude', 'sar_grid_incidenceangle']
 
     # Extract and reshape the initial x and y coordinates
@@ -247,15 +265,9 @@ def Extract_patches(args, item):
     y = scene['sar_grid_line'].values
     y_l = np.unique(y)
 
-
     # Define the finer grid for interpolation
-    r_f, c_f = int(np.round(rows/10)), int(np.round(cols/10))
-    ic(r_f)
-    ic(c_f)
-    x_fine = np.linspace(0, cols - 1, c_f)
-    y_fine = np.linspace(0, rows - 1, r_f)
-
-
+    x_fine = np.linspace(0, cols - 1, cols_down)
+    y_fine = np.linspace(0, rows - 1, rows_down)
     X, Y = np.meshgrid(x_fine, y_fine, indexing='xy')
     points = np.array([Y.flatten(), X.flatten()]).T
 
@@ -266,11 +278,6 @@ def Extract_patches(args, item):
         interpolator = RegularGridInterpolator((y_l, x_l), reshaped_values, method='linear')
         interpolated_values = interpolator(points)
         data[var] = interpolated_values.reshape(X.shape)
-        data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(data[var]).view((1, 1, r_f, c_f)), 
-                                                    size=(rows_down, cols_down), mode='bilinear').numpy().squeeze()
-        del interpolator, interpolated_values
-        gc.collect()
-    print('Grid interpolates')
 
     # ----------- INTERPOLATE VARIABLES TO MATCH SAR SCALE ------------ #
 
@@ -298,7 +305,6 @@ def Extract_patches(args, item):
 
     del scene
     gc.collect()
-    print('Match sar')
 
     # -----------  PATCH EXTRACTION -------------- #
 
@@ -325,26 +331,35 @@ def Extract_patches(args, item):
         data_patch['month'] = months
         data_patch['day'] = days
         joblib.dump(data_patch, output_folder + "/{:05d}.pkl".format(i))
-    print('finish')
+
 
 if __name__ == '__main__':   
+
+    wandb.init(project='extract_patches')
     args = Arguments()
 
     # Grab all .nc files from root as a string list
-    scene_files = glob.glob(args.root + '/*.nc')[0:4]
-
-    patches_idx = []
-    for f in tqdm(scene_files, ncols=50):
-        scene = xr.open_dataset(f, engine='h5netcdf')
-        row, col = scene['nersc_sar_primary'].shape
-        nan_mask = np.isnan(scene['nersc_sar_primary'])
-        patches_idx.append(Slide_patches_index(row, col, args.patch_size, args.downsampling, args.overlap, nan_mask))
-        del scene
+    scene_files = glob.glob(args.root + '/*.nc')
+    
+    #  ---------------- GET INDEXES
+    start_time = time.time()
+    print('Calculating patches ...')
+    iterable = iter(scene_files)
+    if len(scene_files) > 1:
+        patches_idx = Parallel(get_patch_index, iterable, args)
+    else:
+        patches_idx = [get_patch_index(args, next(iterable))]
+    print('Patches index generated! - time:%.2f'%(time.time()-start_time))
+    
+    #  ---------------- EXTRACT PATCHES
+    start_time = time.time()
+    print('Saving patches ...')
     iterable = zip(scene_files, patches_idx)
     
     if len(scene_files) > 1:
         Parallel(Extract_patches, iterable, args.max_processes, args)
     else:
-        Extract_patches(args, next(iterable))    
+        Extract_patches(args, next(iterable))
+    print('Patches saved! - time:%.2f'%(time.time()-start_time))
     
 
