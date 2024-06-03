@@ -357,7 +357,7 @@ if __name__ == '__main__':
     iterable = zip(scene_files, patches_idx)
     
     if len(scene_files) > 1:
-        Parallel(Extract_patches, iterable, args.max_processes, args)
+        Parallel(Extract_patches, iterable, args.n_cores, args)
     else:
         Extract_patches(args, next(iterable))
     print('Patches saved! - time:%.2f'%(time.time()-start_time))
