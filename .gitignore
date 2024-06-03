@@ -148,3 +148,4 @@ checkpoint
 model_params.txt
 *.ckpt*
 results.txt
+wandb/settings

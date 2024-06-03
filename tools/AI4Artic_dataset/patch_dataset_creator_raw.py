@@ -33,12 +33,12 @@ def Arguments():
     """
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', default='/media/fernando/Storage/Databases/ai4arctic_raw_train_v3', type=str, help='')
+    parser.add_argument('--root', default='../../../ai4arctic/dataset/ai4arctic_raw_train_v3', type=str, help='')
     parser.add_argument('--downsampling', default=1, type=int, help='Downsampling of the scene')
     parser.add_argument('--patch_size', default=224, type=int, help='size of patch')
     parser.add_argument('--overlap', default=0.0, type=float, help='Amount of overlap. Max 1, Min 0')
     parser.add_argument('--max_processes', default=2, type=int, help='Amount of overlap. Max 1, Min 0')
-    parser.add_argument('--output', default='/home/fernando/scratch/train', type=str, help='')
+    parser.add_argument('--output', default='~/scratch/train', type=str, help='')
     args = parser.parse_args()
     return args
 

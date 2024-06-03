@@ -5,3 +5,7 @@ matplotlib
 modelindex
 numpy
 rich
+icecream
+xarray
+tdqm
+wandb
