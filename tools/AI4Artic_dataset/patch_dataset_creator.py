@@ -33,7 +33,7 @@ def Arguments():
     """
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', default='/media/fernando/Databases/ai4arcticready2train_v2', type=str, help='')
+    parser.add_argument('--root', default='/media/fernando/Storage/Databases/ai4arcticready2train_v2', type=str, help='')
     parser.add_argument('--downsampling', default=1, type=int, help='Downsampling of the scene')
     parser.add_argument('--patch_size', default=224, type=int, help='size of patch')
     parser.add_argument('--overlap', default=0.0, type=float, help='Amount of overlap. Max 1, Min 0')
@@ -110,7 +110,7 @@ class Slide_patches_index(data.Dataset):
                 x2_land = int(np.round(x2 * d_w_img))
 
                 # Removes the patches that are in land
-                if not landmask[y1_land:y2_land, x1_land:x2_land].any():
+                if not landmask[y1_land:y2_land, x1_land:x2_land].all():
                     self.patches_list.append((y1, y2, x1, x2))
                 
                 # program to verify the patches are working
@@ -219,13 +219,15 @@ def Extract_patches(args, item):
         r, c = scene[var].shape
         data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(scene[var].values).view((1, 1, r, c)), 
                                                     size=(rows_down, cols_down), mode='bilinear').numpy().squeeze()
+         
 
     sea_ice_maps = ['SIC', 'FLOE', 'SOD']
     for var in sea_ice_maps:
         r, c = scene[var].shape
         data[var] = torch.nn.functional.interpolate(input=torch.from_numpy(scene[var].values).view((1, 1, r, c)), 
                                                     size=(rows_down, cols_down), mode='nearest').numpy().squeeze()
-                                            
+        
+              
     # -----------  PATCH EXTRACTION -------------- #
     data_patch = {}
     for i in range(len(patch_idx)):
@@ -255,7 +257,7 @@ if __name__ == '__main__':
     args = Arguments()
 
     # Grab all .nc files from root as a string list
-    scene_files = glob.glob(args.root + '/*.nc')[0:1]
+    scene_files = glob.glob(args.root + '/*.nc')[0:4]
 
     patches_idx = []
     for f in tqdm(scene_files, ncols=50):
