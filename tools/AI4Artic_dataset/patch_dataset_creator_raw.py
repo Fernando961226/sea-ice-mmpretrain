@@ -24,6 +24,7 @@ from parallel_stuff import Parallel
 from scipy.interpolate import RegularGridInterpolator
 import gc
 import wandb
+
 def Arguments():
     """
     Parses command-line arguments.
@@ -332,6 +333,12 @@ def Extract_patches(args, item):
         data_patch['day'] = days
         joblib.dump(data_patch, output_folder + "/{:05d}.pkl".format(i))
 
+    output_tar_file = output_folder + '.tar.gz'
+    os.system(f"tar -czf {output_tar_file} -C {output_folder} .")
+    os.system(f" rm -r {output_folder}")
+
+
+
 
 if __name__ == '__main__':   
 
@@ -339,7 +346,7 @@ if __name__ == '__main__':
     args = Arguments()
 
     # Grab all .nc files from root as a string list
-    scene_files = glob.glob(args.root + '/*.nc')
+    scene_files = glob.glob(args.root + '/*.nc')[0:4]
     
     #  ---------------- GET INDEXES
     start_time = time.time()
