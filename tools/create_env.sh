@@ -8,8 +8,8 @@ echo "loading module done"
 
 echo "Creating new virtualenv"
 
-virtualenv ../env/$1
-source ../env/$1/bin/activate
+virtualenv ../env/sea_ice_fm
+source ../env/sea_ice_fm/bin/activate
 
 echo "Activating virtual env"
 
