@@ -346,7 +346,7 @@ if __name__ == '__main__':
     print('Calculating patches ...')
     iterable = iter(scene_files)
     if len(scene_files) > 1:
-        patches_idx = Parallel(get_patch_index, iterable, args)
+        patches_idx = Parallel(get_patch_index, iterable, args.n_cores, args)
     else:
         patches_idx = [get_patch_index(args, next(iterable))]
     print('Patches index generated! - time:%.2f'%(time.time()-start_time))

@@ -18,4 +18,6 @@ cd ../
 pip install mmengine>=0.8.3
 pip install mmcv
 pip install -v -e .
+
+echo "Installing requirements"
 pip install -r requirements.txt

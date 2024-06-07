@@ -1,3 +1,14 @@
--r requirements/optional.txt
--r requirements/runtime.txt
--r requirements/tests.txt
+einops
+importlib-metadata
+mat4py
+matplotlib
+modelindex
+numpy
+rich
+icecream
+xarray
+tdqm
+wandb
+scipy
+joblib
+h5netcdf

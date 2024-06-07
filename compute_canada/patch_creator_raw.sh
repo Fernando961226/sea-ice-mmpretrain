@@ -10,6 +10,8 @@
 #SBATCH --mail-type=END
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-type=REQUEUE
+
+
 set -e
 
 module purge
@@ -17,13 +19,13 @@ module load  StdEnv/2020 python/3.10.2
 module load gcc/9.3.0 opencv/4.8.0 cuda/11.7
 echo "loading module done"
 
-source env/sea_ice_fm/bin/activate
+source ../env/sea_ice_fm/bin/activate
 
 echo "Activating virtual environment done"
 
 cd $HOME/projects/rrg-dclausi/$USER/sea-ice-mmpretrain/tools/AI4Artic_dataset
 
 
-python patch_dataset_creator_raw.py --
+python patch_dataset_creator_raw.py
 
 

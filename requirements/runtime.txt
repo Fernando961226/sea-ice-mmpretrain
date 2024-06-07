@@ -9,3 +9,4 @@ icecream
 xarray
 tdqm
 wandb
+scipy

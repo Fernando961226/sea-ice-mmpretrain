@@ -149,3 +149,8 @@ model_params.txt
 *.ckpt*
 results.txt
 wandb/settings
+
+# wandb
+**/wandb/
+
+
