@@ -346,7 +346,7 @@ if __name__ == '__main__':
     args = Arguments()
 
     # Grab all .nc files from root as a string list
-    scene_files = glob.glob(args.root + '/*.nc')[0:4]
+    scene_files = glob.glob(args.root + '/*.nc')
     
     #  ---------------- GET INDEXES
     start_time = time.time()
