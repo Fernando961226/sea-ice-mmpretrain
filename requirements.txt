@@ -1,3 +1,5 @@
+torch
+torchvision
 einops
 importlib-metadata
 mat4py
